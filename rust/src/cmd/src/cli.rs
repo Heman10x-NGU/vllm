@@ -1061,7 +1061,6 @@ impl SharedRuntimeArgs {
         FrontendConfig {
             server: ServerConfig {
                 model: model.id,
-                max_model_len: None,
                 revision: model.revision,
                 tokenizer,
                 hf_config,
@@ -1538,7 +1537,6 @@ impl ServeArgs {
 
         ServerConfig {
             model: model.id,
-            max_model_len: None,
             revision: model.revision,
             tokenizer,
             hf_config,
