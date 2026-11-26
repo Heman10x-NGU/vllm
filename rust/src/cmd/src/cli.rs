@@ -44,7 +44,7 @@ use vllm_server::{
     DEFAULT_LOG_STATS_INTERVAL, DEFAULT_MAX_N_SEQUENCES, DEFAULT_REQUEST_BODY_LIMIT_BYTES,
     DecisionsReadStrategy, DefaultMmLoras, EngineCoreConfig, FingerprintMode, HttpListenerMode,
     LlmSource, LoraModulePath, OutputLogConfig, OutputLogging, ParserSelection, ReasoningEffort,
-    RenderConfig, RendererSelection, Server, ServerConfig,
+    RemoteGrpcConfig, RenderConfig, RendererSelection, Server, ServerConfig,
 };
 use vllm_text::backend::hf::{HfOverrides, ModelFileSources};
 use vllm_tracing::{LogFormatter, LogLevel};
@@ -1061,7 +1061,6 @@ impl SharedRuntimeArgs {
         FrontendConfig {
             server: ServerConfig {
                 model: model.id,
-                max_model_len: None,
                 revision: model.revision,
                 tokenizer,
                 hf_config,
@@ -1511,7 +1510,7 @@ pub struct ServeArgs {
 }
 
 impl ServeArgs {
-    pub(super) fn to_server_config(&self) -> anyhow::Result<ServerConfig> {
+    pub(super) fn to_server_config(&self) -> ServerConfig {
         let listener_mode = match &self.uds {
             Some(path) => HttpListenerMode::BindUnix { path: path.clone() },
             None => HttpListenerMode::BindTcp {
@@ -1539,22 +1538,8 @@ impl ServeArgs {
             hf_token,
         } = runtime.model_args().file_sources();
 
-        let max_model_len = match self.managed_engine.max_model_len.as_deref() {
-            Some(value) if self.remote_generation_url.is_some() => {
-                let Some(limit) = parse_human_readable_int(value)
-                    .and_then(|n| u32::try_from(n).ok())
-                    .and_then(NonZeroU32::new)
-                else {
-                    anyhow::bail!("remote --max-model-len must be a positive token count");
-                };
-                Some(limit)
-            }
-            _ => None,
-        };
-
-        Ok(ServerConfig {
+        ServerConfig {
             model: model.id,
-            max_model_len,
             revision: model.revision,
             tokenizer,
             hf_config,
@@ -1592,7 +1577,23 @@ impl ServeArgs {
             shutdown_timeout: runtime.shutdown_timeout(),
             keep_alive_on_engine_death: runtime.keep_alive_on_engine_death,
             keep_alive_timeout: runtime.keep_alive_timeout(),
-        })
+        }
+    }
+
+    pub(super) fn to_remote_grpc_config(&self, url: &str) -> anyhow::Result<RemoteGrpcConfig> {
+        let max_model_len = match self.managed_engine.max_model_len.as_deref() {
+            Some(value) => {
+                let Some(limit) = parse_human_readable_int(value)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .and_then(NonZeroU32::new)
+                else {
+                    anyhow::bail!("remote --max-model-len must be a positive token count");
+                };
+                Some(limit)
+            }
+            None => None,
+        };
+        RemoteGrpcConfig::new(url.to_owned(), max_model_len)
     }
 
     pub(super) fn to_engine_core_config(
