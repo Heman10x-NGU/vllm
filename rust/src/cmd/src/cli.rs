@@ -1471,9 +1471,6 @@ impl FrontendArgs {
 #[educe(Debug)]
 #[command(override_usage = "vllm-rs serve <MODEL> [OPTIONS] [-- <PYTHON_ARGS>...]")]
 pub struct ServeArgs {
-    /// Send token generation to a vllm.Inference gRPC endpoint.
-    #[arg(long, conflicts_with = "headless")]
-    pub remote_generation_url: Option<String>,
     /// Only launch the managed Python headless engine and do not start the Rust
     /// frontend.
     #[arg(long)]
@@ -1491,6 +1488,9 @@ pub struct ServeArgs {
     /// the server drives engine-core. When not set, no gRPC server is started.
     #[arg(long)]
     pub grpc_port: Option<u16>,
+    /// Send token generation to a vllm.Inference gRPC endpoint.
+    #[arg(long, conflicts_with = "headless")]
+    pub remote_generation_url: Option<String>,
 
     /// Flag to print debug information about CLI argument parsing and exit.
     #[educe(Debug(ignore))]
@@ -1511,7 +1511,7 @@ pub struct ServeArgs {
 }
 
 impl ServeArgs {
-    pub(super) fn to_server_config(&self) -> ServerConfig {
+    pub(super) fn to_server_config(&self) -> anyhow::Result<ServerConfig> {
         let listener_mode = match &self.uds {
             Some(path) => HttpListenerMode::BindUnix { path: path.clone() },
             None => HttpListenerMode::BindTcp {
@@ -1539,9 +1539,25 @@ impl ServeArgs {
             hf_token,
         } = runtime.model_args().file_sources();
 
-        ServerConfig {
+        let max_model_len = if let (Some(_), Some(value)) = (
+            &self.remote_generation_url,
+            self.managed_engine.max_model_len.as_deref(),
+        ) {
+            Some(
+                parse_human_readable_int(value)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .and_then(NonZeroU32::new)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("remote --max-model-len must be a positive token count")
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        Ok(ServerConfig {
             model: model.id,
-            max_model_len: None,
+            max_model_len,
             revision: model.revision,
             tokenizer,
             hf_config,
@@ -1579,22 +1595,7 @@ impl ServeArgs {
             shutdown_timeout: runtime.shutdown_timeout(),
             keep_alive_on_engine_death: runtime.keep_alive_on_engine_death,
             keep_alive_timeout: runtime.keep_alive_timeout(),
-        }
-    }
-
-    pub(super) fn remote_max_model_len(&self) -> anyhow::Result<Option<NonZeroU32>> {
-        self.managed_engine
-            .max_model_len
-            .as_deref()
-            .map(|value| {
-                parse_human_readable_int(value)
-                    .and_then(|n| u32::try_from(n).ok())
-                    .and_then(NonZeroU32::new)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("remote --max-model-len must be a positive token count")
-                    })
-            })
-            .transpose()
+        })
     }
 
     pub(super) fn to_engine_core_config(
