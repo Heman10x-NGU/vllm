@@ -14,12 +14,13 @@ use std::fmt;
 use crate::routes::openai::utils::metrics::PerRequestMetrics;
 use crate::routes::openai::utils::types::{
     Function, FunctionChoice, ImageDetail, InputAudio, ReasoningEffort, StringOrArray,
-    ToolChoiceValue, ToolReference, default_true, deserialize_request_top_k,
+    ToolChoiceValue, ToolReference, default_true,
 };
 use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vllm_chat::AllowedToolsMode;
+use vllm_text::deserialize_request_top_k;
 
 /// Responses API `input` field: either a plain string (single user message)
 /// or a list of input/output items.

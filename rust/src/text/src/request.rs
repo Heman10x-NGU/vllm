@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use enum_as_inner::EnumAsInner;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use vllm_engine_core_client::protocol::kv_hints::KvHintsEnvelope;
 use vllm_engine_core_client::protocol::lora::LoraRequest;
@@ -33,6 +33,25 @@ pub fn normalize_top_k(value: i64) -> std::result::Result<Option<u32>, String> {
         value => Err(format!(
             "top_k must be -1, 0, or a positive integer, got {value}"
         )),
+    }
+}
+
+/// Deserialize a request `top_k` while preserving explicit disable (`-1` or `0`).
+///
+/// Null and omitted values remain `None` so model generation defaults apply.
+/// Explicit `-1` and `0` become `Some(0)` so the request overrides those
+/// defaults and disables top-k sampling. Positive limits are preserved.
+pub fn deserialize_request_top_k<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<i64>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(value) => normalize_top_k(value)
+            .map(|value| Some(value.unwrap_or(0)))
+            .map_err(serde::de::Error::custom),
     }
 }
 
@@ -77,7 +96,9 @@ pub struct SamplingParams {
     pub watermarking: Option<bool>,
     /// Cumulative probability threshold for nucleus sampling.
     pub top_p: Option<f32>,
-    /// Maximum number of top tokens to consider. `Some(0)` means all tokens.
+    /// Maximum number of top tokens to consider. `None` lets model defaults
+    /// apply; `Some(0)` disables top-k filtering.
+    #[serde(deserialize_with = "deserialize_request_top_k")]
     pub top_k: Option<u32>,
     /// Random seed used by the sampler when present.
     pub seed: Option<i64>,
@@ -454,5 +475,31 @@ mod tests {
 
         let back: SamplingParams = serde_json::from_value(value).unwrap();
         assert_eq!(back, params);
+    }
+
+    #[test]
+    fn sampling_params_top_k_deserialization_and_roundtrip() {
+        let omitted: SamplingParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(omitted.top_k, None);
+
+        let null_val: SamplingParams = serde_json::from_str(r#"{"top_k": null}"#).unwrap();
+        assert_eq!(null_val.top_k, None);
+
+        let disabled_neg: SamplingParams = serde_json::from_str(r#"{"top_k": -1}"#).unwrap();
+        assert_eq!(disabled_neg.top_k, Some(0));
+
+        let disabled_zero: SamplingParams = serde_json::from_str(r#"{"top_k": 0}"#).unwrap();
+        assert_eq!(disabled_zero.top_k, Some(0));
+
+        let positive: SamplingParams = serde_json::from_str(r#"{"top_k": 20}"#).unwrap();
+        assert_eq!(positive.top_k, Some(20));
+
+        assert!(serde_json::from_str::<SamplingParams>(r#"{"top_k": -2}"#).is_err());
+        assert!(serde_json::from_str::<SamplingParams>(r#"{"top_k": 4294967296}"#).is_err());
+
+        let encoded = serde_json::to_value(&disabled_neg).unwrap();
+        assert_eq!(encoded["top_k"], 0);
+        let roundtrip: SamplingParams = serde_json::from_value(encoded).unwrap();
+        assert_eq!(roundtrip, disabled_neg);
     }
 }

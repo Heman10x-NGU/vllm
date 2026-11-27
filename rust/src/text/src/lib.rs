@@ -26,7 +26,10 @@ pub use output::{
     DecodedText, DecodedTextEvent, DecodedTokenLogprob, Finished, SampledDelta, TextDecodeOptions,
     TextOutputStreamExt, TokenAnchor, TokenAttribution,
 };
-pub use request::{Prompt, SamplingParams, TextRequest, normalize_top_k, validate_cache_salt};
+pub use request::{
+    Prompt, SamplingParams, TextRequest, deserialize_request_top_k, normalize_top_k,
+    validate_cache_salt,
+};
 use trait_set::trait_set;
 use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputBackend;
 pub use vllm_llm::FinishReason;

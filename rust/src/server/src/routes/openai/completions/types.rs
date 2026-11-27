@@ -10,12 +10,12 @@ use serde_json::{Map, Value};
 use serde_with::DefaultOnNull;
 use vllm_engine_core_client::protocol::sampling::RepetitionDetectionParams;
 use vllm_llm::WeightVersionSpan;
-use vllm_text::{Prompt, TruncationSide};
+use vllm_text::{Prompt, TruncationSide, deserialize_request_top_k};
 
 use crate::routes::openai::utils::metrics::{PerRequestMetrics, StreamPerRequestMetrics};
 use crate::routes::openai::utils::types::{
     LogProbs, PromptLogprobs, StreamOptions, StreamResponseEnvelope, StringOrArray, Usage,
-    default_true, deserialize_request_top_k,
+    default_true,
 };
 
 /// The `prompt` of a completions request: one prompt, or a batch of prompts

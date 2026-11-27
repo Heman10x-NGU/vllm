@@ -9919,6 +9919,93 @@ async fn raw_generate_rejects_invalid_parallel_sampling() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
+async fn raw_generate_normalizes_top_k_and_rejects_invalid_values() {
+    for (top_k_json, expected_engine_top_k) in [
+        (json!(-1), 0),
+        (json!(0), 0),
+        (json!(serde_json::Value::Null), 20),
+        (json!(5), 5),
+    ] {
+        let backend = Arc::new(FakeChatBackend {
+            sampling_hints: vllm_text::SamplingHints {
+                default_top_k: Some(20),
+                ..Default::default()
+            },
+            ..FakeChatBackend::new()
+        });
+        let observed_top_k = Arc::new(std::sync::Mutex::new(None));
+        let observed_in_script = Arc::clone(&observed_top_k);
+        let (state, engine_task) = test_admin_state_with_backend_and_engine_script(
+            default_ready_response(),
+            backend,
+            |state| state,
+            move |dealer, push| {
+                boxed_test_future(async move {
+                    let add = recv_engine_message(dealer).await;
+                    let request = decode_add_request(&add);
+                    *observed_in_script.lock().unwrap() =
+                        Some(request.sampling_params.as_ref().expect("sampling params").top_k);
+                    send_outputs(
+                        push,
+                        engine_outputs_for_request(
+                            &request.request_id,
+                            default_stream_output_specs(),
+                        ),
+                    )
+                    .await;
+                })
+            },
+        )
+        .await;
+        let mut app = build_router_with_gates(
+            state,
+            RouteGates {
+                scale_out: true,
+                ..RouteGates::default()
+            },
+        );
+
+        let (status, json) = post_json(
+            &mut app,
+            "/inference/v1/generate",
+            json!({
+                "model": "Qwen/Qwen1.5-0.5B-Chat",
+                "token_ids": [11, 22],
+                "sampling_params": {"top_k": top_k_json}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        engine_task.await.expect("mock engine task");
+        assert_eq!(*observed_top_k.lock().unwrap(), Some(expected_engine_top_k));
+    }
+
+    let (mut app, _engine_task) = test_app().await;
+    for (bad_top_k, expected_substr) in
+        [(-2_i64, "top_k"), (i64::from(u32::MAX) + 1, "out of range")]
+    {
+        let (status, json) = post_json(
+            &mut app,
+            "/inference/v1/generate",
+            json!({
+                "model": "Qwen/Qwen1.5-0.5B-Chat",
+                "token_ids": [11, 22],
+                "sampling_params": {"top_k": bad_top_k}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        assert_eq!(json["error"]["param"], "body.sampling_params", "{json}");
+        let msg = json["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            msg.contains(expected_substr),
+            "expected {expected_substr:?} in error message: {json}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
 async fn raw_generate_n_returns_one_choice_per_sample() {
     let (mut app, engine_task, requests) =
         test_app_with_parallel_samples(two_sample_outputs()).await;

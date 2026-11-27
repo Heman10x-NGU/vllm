@@ -12,7 +12,7 @@ use serde_with::{DefaultOnNull, SerializeDisplay};
 use vllm_engine_core_client::protocol::multimodal::MmModality;
 use vllm_engine_core_client::protocol::sampling::RepetitionDetectionParams;
 use vllm_llm::WeightVersionSpan;
-use vllm_text::TruncationSide;
+use vllm_text::{TruncationSide, deserialize_request_top_k};
 
 use crate::routes::inference::generate::MmPayload;
 use crate::routes::openai::utils::metrics::{PerRequestMetrics, StreamPerRequestMetrics};
@@ -20,7 +20,7 @@ use crate::routes::openai::utils::structured_outputs::ResponseFormat;
 use crate::routes::openai::utils::types::{
     ChatLogProbs, ChatMessage, ContentPart, FunctionCallResponse, PromptLogprobs, ReasoningEffort,
     StreamOptions, StreamResponseEnvelope, StringOrArray, Tool, ToolCall, ToolCallDelta,
-    ToolChoice, Usage, default_true, deserialize_request_top_k,
+    ToolChoice, Usage, default_true,
 };
 
 /// vLLM-compatible request type for the Chat Completions API.
